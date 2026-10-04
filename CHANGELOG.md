@@ -1,3 +1,8 @@
+### 1.2.0: 2026-10-04
+
+* Sign in with PKCE, and refresh and revoke tokens, without a client secret
+* Send OAuth requests to auth.trakt.tv
+
 ### 1.1.0: 2026-10-02
 
 * Page results larger than 20 000 tokens

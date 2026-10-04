@@ -17,7 +17,6 @@ from trakt_mcp import runtime, tools
 @pytest.fixture(autouse=True)
 def transport(monkeypatch, tmp_path):
     monkeypatch.setenv("TRAKT_CLIENT_ID", "cid")
-    monkeypatch.setenv("TRAKT_CLIENT_SECRET", "secret")
     monkeypatch.setattr(runtime, "_TOKEN_PATH", tmp_path / "token.json")
     runtime._http = None
     runtime._token = None

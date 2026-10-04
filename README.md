@@ -75,7 +75,6 @@ Create an application at [trakt.tv/oauth/applications](https://trakt.tv/oauth/ap
 
 ```bash
 export TRAKT_CLIENT_ID=...
-export TRAKT_CLIENT_SECRET=...   # only needed for signing in
 ```
 
 ### Claude Code
@@ -86,11 +85,11 @@ claude mcp add trakt -- /path/to/trakt-mcp/.venv/bin/trakt-mcp
 
 ### Signing in
 
-Public data needs only the client id. Anything under `sync`, `users/me`, `checkin` or `scrobble` needs an account:
+Public data needs only the client id. Anything under `sync`, `users/me`, `checkin` or `scrobble` needs an account. Sign-in uses [PKCE](https://developer.trakt.tv/docs/pkce), so no client secret is needed:
 
-1. `start_authentication` returns a code and a URL
-2. Open the URL, enter the code
-3. `finish_authentication` with the same device code
+1. `start_authentication` returns a URL
+2. Open the URL, sign in and approve, and Trakt shows a code
+3. `finish_authentication` with that code
 
 The token lands in `~/.cache/trakt-mcp/token.json` with mode 600 and is refreshed automatically shortly before it expires. `clear_authentication` revokes it.
 
@@ -123,7 +122,7 @@ sudo systemctl enable --now trakt-mcp trakt-mcp-auth
 
 Point `nginx/trakt-mcp.conf` at your own hostname and send the tunnel at `127.0.0.1:8581`.
 
-Environment the server itself reads: `TRAKT_CLIENT_ID, TRAKT_CLIENT_SECRET`. The sign-in page carries the Trakt mark and accent colour, set through `APP_NAME`, `APP_ACCENT` and `APP_BLURB` in the auth unit.
+Environment the server itself reads: `TRAKT_CLIENT_ID`. The sign-in page carries the Trakt mark and accent colour, set through `APP_NAME`, `APP_ACCENT` and `APP_BLURB` in the auth unit.
 
 ### Claude.ai
 

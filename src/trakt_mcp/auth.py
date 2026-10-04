@@ -1,14 +1,17 @@
-"""Device-code sign-in, kept out of the generated tools.
+"""PKCE sign-in, kept out of the generated tools.
 
 Trakt's OAuth endpoints are not part of the API contract the tools come from,
-and the flow needs state across three calls, so these four are written by hand.
+and the flow needs state across two calls, so these four are written by hand.
 
-Ref: https://trakt.docs.apiary.io/#reference/authentication-devices
+Ref: https://developer.trakt.tv/docs/pkce
 """
 
+import base64
+import hashlib
 import json
-import os
+import secrets
 import time
+from urllib.parse import urlencode
 
 import httpx
 
@@ -16,9 +19,10 @@ from .runtime import (
     _DESTRUCTIVE,
     _READ,
     _WRITE,
-    ENV_CLIENT_SECRET,
-    TraktError,
+    AUTH_URL,
+    REDIRECT_URI,
     _client,
+    _detail,
     _err,
     clear_token,
     client_id,
@@ -27,45 +31,52 @@ from .runtime import (
     store_token,
 )
 
+# The verifier of the sign-in in progress. Trakt checks the code against it, so
+# it lives only in memory and only until its code is exchanged.
+_verifier: str | None = None
+
 
 def _ok(data: dict) -> str:
     return json.dumps({"status": "success", **data}, indent=2)
 
 
-def _client_secret() -> str:
-    secret = os.getenv(ENV_CLIENT_SECRET)
-    if not secret:
-        raise TraktError(
-            f"{ENV_CLIENT_SECRET} is not set. It is on the same application "
-            "page as the client id, at https://trakt.tv/oauth/applications"
-        )
-    return secret
+def _failed(message: str) -> str:
+    return json.dumps({"status": "error", "message": message})
+
+
+def _challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 @mcp.tool(annotations=_WRITE)
 def start_authentication() -> str:
     """Begin signing in to Trakt.
 
-    Returns a short code and a URL. Open the URL, enter the code, then call
-    finish_authentication. Only needed for the endpoints that act on an
-    account: sync, users/me, checkin, scrobble, recommendations and lists you
-    own.
+    Returns a URL. Open it, sign in and approve, then call
+    finish_authentication with the code Trakt shows. Only needed for the
+    endpoints that act on an account: sync, users/me, checkin, scrobble,
+    recommendations and lists you own.
     """
+    global _verifier
     try:
-        response = _client().post(
-            "/oauth/device/code", json={"client_id": client_id()}
+        verifier = secrets.token_urlsafe(64)
+        query = urlencode(
+            {
+                "response_type": "code",
+                "client_id": client_id(),
+                "redirect_uri": REDIRECT_URI,
+                "code_challenge": _challenge(verifier),
+                "code_challenge_method": "S256",
+            }
         )
-        response.raise_for_status()
-        device = response.json()
+        _verifier = verifier
         return _ok(
             {
-                "user_code": device["user_code"],
-                "verification_url": device["verification_url"],
-                "expires_in_seconds": device["expires_in"],
-                "device_code": device["device_code"],
+                "authorize_url": f"{AUTH_URL}/oauth/authorize?{query}",
                 "next_step": (
-                    "Open verification_url, enter user_code, then call "
-                    "finish_authentication with this device_code."
+                    "Open authorize_url, sign in and approve, then call "
+                    "finish_authentication with the code Trakt shows."
                 ),
             }
         )
@@ -74,54 +85,37 @@ def start_authentication() -> str:
 
 
 @mcp.tool(annotations=_WRITE)
-def finish_authentication(device_code: str, wait_seconds: int = 0) -> str:
-    """Exchange an approved device code for a stored token.
+def finish_authentication(code: str) -> str:
+    """Exchange the code Trakt showed after sign-in for a stored token.
 
     Args:
-        device_code: The device_code returned by start_authentication.
-        wait_seconds: How long to keep polling while you approve in the
-            browser. 0 checks once and reports whether approval is still
-            pending, which is the better default for an interactive session.
+        code: The authorization code Trakt displayed once you approved.
     """
+    global _verifier
     try:
-        deadline = time.time() + max(0, wait_seconds)
-        while True:
-            response = _client().post(
-                "/oauth/device/token",
-                json={
-                    "code": device_code,
-                    "client_id": client_id(),
-                    "client_secret": _client_secret(),
-                },
+        if _verifier is None:
+            return _failed("No sign-in in progress. Run start_authentication first.")
+
+        response = _client().post(
+            f"{AUTH_URL}/oauth/token",
+            json={
+                "code": code.strip(),
+                "code_verifier": _verifier,
+                "client_id": client_id(),
+                "redirect_uri": REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+        )
+        if response.status_code != 200:
+            return _failed(
+                f"Trakt refused the code (HTTP {response.status_code}): "
+                f"{_detail(response)}. Check the code and try again, or run "
+                "start_authentication for a new one."
             )
 
-            if response.status_code == 200:
-                store_token(response.json())
-                return _ok({"authenticated": True})
-
-            # Trakt signals flow state through the status code alone.
-            pending = response.status_code == 400
-            if pending and time.time() < deadline:
-                time.sleep(5)
-                continue
-
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": {
-                        400: "Not approved yet. Enter the code in the browser, "
-                        "then call this again.",
-                        404: "Unknown device code. Run start_authentication again.",
-                        409: "This code was already used.",
-                        410: "The code expired. Run start_authentication again.",
-                        418: "Sign-in was denied.",
-                        429: "Polling too fast. Wait a few seconds.",
-                    }.get(
-                        response.status_code,
-                        f"Trakt refused the code (HTTP {response.status_code}).",
-                    ),
-                }
-            )
+        store_token(response.json())
+        _verifier = None
+        return _ok({"authenticated": True})
     except Exception as e:
         return _err(e)
 
@@ -139,9 +133,7 @@ def get_authentication_status() -> str:
                 "authenticated": True,
                 "expires_at": expires_at,
                 "expires_in_seconds": max(0, int(expires_at - time.time())),
-                "can_refresh": bool(
-                    token.get("refresh_token") and os.getenv(ENV_CLIENT_SECRET)
-                ),
+                "can_refresh": bool(token.get("refresh_token")),
             }
         )
     except Exception as e:
@@ -153,15 +145,11 @@ def clear_authentication() -> str:
     """Revoke the stored token and forget it."""
     try:
         token = load_token()
-        if token and os.getenv(ENV_CLIENT_SECRET):
+        if token:
             try:
                 _client().post(
-                    "/oauth/revoke",
-                    json={
-                        "token": token.get("access_token"),
-                        "client_id": client_id(),
-                        "client_secret": _client_secret(),
-                    },
+                    f"{AUTH_URL}/oauth/revoke",
+                    json={"token": token.get("access_token"), "client_id": client_id()},
                 )
             except httpx.HTTPError:
                 # A token Trakt has already dropped still has to be forgotten

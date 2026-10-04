@@ -19,10 +19,16 @@ logger = logging.getLogger(__name__)
 APP = "trakt"
 TITLE = "Trakt"
 BASE_URL = "https://api.trakt.tv"
+AUTH_URL = "https://auth.trakt.tv"
 DEFAULT_PORT = 8580
 
 ENV_CLIENT_ID = "TRAKT_CLIENT_ID"
-ENV_CLIENT_SECRET = "TRAKT_CLIENT_SECRET"
+
+# The only redirect a server with no web address of its own can register: Trakt
+# shows the code for pasting back. Trakt advises against it because another app
+# could catch the code, but under PKCE a caught code is useless without the
+# verifier, which never leaves this process.
+REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"
 
 # Trakt pins its API generation in a header rather than the path.
 API_VERSION = "2"
@@ -74,7 +80,8 @@ mcp = FastMCP(
         "create_* posts, update_* puts and delete_* removes. "
         "Public data needs only a client id. Anything under sync, users/me or "
         "checkin needs a signed-in account: run start_authentication, open the "
-        "URL it returns, enter the code, then call finish_authentication. "
+        "URL it returns, sign in, then call finish_authentication with the "
+        "code Trakt shows. "
         "Ids may be a Trakt id, a slug, or an IMDB id."
     ),
 )
@@ -171,18 +178,16 @@ def access_token() -> str | None:
 
 
 def _refresh(token: dict) -> dict | None:
-    secret = os.getenv(ENV_CLIENT_SECRET)
     refresh = token.get("refresh_token")
-    if not secret or not refresh:
+    if not refresh:
         return None
     try:
         response = _client().post(
-            "/oauth/token",
+            f"{AUTH_URL}/oauth/token",
             json={
                 "refresh_token": refresh,
                 "client_id": client_id(),
-                "client_secret": secret,
-                "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
+                "redirect_uri": REDIRECT_URI,
                 "grant_type": "refresh_token",
             },
         )
