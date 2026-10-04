@@ -193,12 +193,29 @@ def _refresh(token: dict) -> dict | None:
         )
         response.raise_for_status()
     except (httpx.HTTPError, TraktError):
-        logger.warning("Token refresh failed; the stored token may have been revoked")
-        return None
+        return _token_refreshed_elsewhere(refresh)
 
     fresh = response.json()
     store_token(fresh)
     return fresh
+
+
+def _token_refreshed_elsewhere(spent: str) -> dict | None:
+    """The token another server on the same file refreshed to, if it did.
+
+    Refresh tokens are single-use, so when two servers race to refresh, the
+    loser's refresh fails and the winner's token is the only live one.
+    """
+    global _token
+    try:
+        on_disk = json.loads(_TOKEN_PATH.read_text())
+    except (OSError, ValueError):
+        on_disk = None
+    if not on_disk or on_disk.get("refresh_token") in (None, spent):
+        logger.warning("Token refresh failed; the stored token may have been revoked")
+        return None
+    _token = on_disk
+    return on_disk
 
 
 # -- transport --------------------------------------------------------

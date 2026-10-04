@@ -155,3 +155,36 @@ def test_every_tool_registers():
 
     registered = asyncio.run(runtime.mcp.list_tools())
     assert len(registered) == 339
+
+
+def test_a_refresh_lost_to_another_process_adopts_its_token():
+    runtime.store_token(
+        {
+            "access_token": "old",
+            "refresh_token": "r",
+            "expires_in": 60,
+            "created_at": int(time.time()),
+        }
+    )
+    # Another server on the same token file has already spent "r".
+    runtime._TOKEN_PATH.write_text(
+        json.dumps(
+            {
+                "access_token": "theirs",
+                "refresh_token": "r2",
+                "expires_at": int(time.time()) + 7200,
+            }
+        )
+    )
+    seen = {}
+
+    def handler(request):
+        if request.url.path == "/oauth/token":
+            return httpx.Response(400, json={"error": "invalid_grant"})
+        seen.update(request.headers)
+        return httpx.Response(200, json=[])
+
+    install(handler)
+    runtime.call("GET", "/sync/history")
+    assert seen["authorization"] == "Bearer theirs"
+    assert runtime.load_token()["refresh_token"] == "r2"
