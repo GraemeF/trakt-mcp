@@ -57,7 +57,7 @@ Verb first, derived from the method and path:
 | `update_*` | PUT | `update_users_by_id_lists_by_list_id` |
 | `delete_*` | DELETE | `delete_sync_watchlist_remove` |
 
-334 tools is a lot to put in front of a model at once. If your client supports tool filtering, narrow it to the groups you use.
+334 tools is a lot to put in front of a model at once, and a client that defers tools still lists every name. Set `TRAKT_TOOLS` to a comma-separated list of tool names and the server registers only those. A name it does not have stops it at startup.
 
 ## What is covered
 
@@ -122,7 +122,7 @@ sudo systemctl enable --now trakt-mcp trakt-mcp-auth
 
 Point `nginx/trakt-mcp.conf` at your own hostname and send the tunnel at `127.0.0.1:8581`.
 
-Environment the server itself reads: `TRAKT_CLIENT_ID`. The sign-in page carries the Trakt mark and accent colour, set through `APP_NAME`, `APP_ACCENT` and `APP_BLURB` in the auth unit.
+Environment the server itself reads: `TRAKT_CLIENT_ID`, and `TRAKT_TOOLS` to register only the tools it names. The sign-in page carries the Trakt mark and accent colour, set through `APP_NAME`, `APP_ACCENT` and `APP_BLURB` in the auth unit.
 
 ### Claude.ai
 

@@ -23,6 +23,9 @@ AUTH_URL = "https://auth.trakt.tv"
 DEFAULT_PORT = 8580
 
 ENV_CLIENT_ID = "TRAKT_CLIENT_ID"
+# Comma-separated tool names. When set, only these tools register, because a
+# client lists every tool name in the model's context.
+ENV_TOOLS = "TRAKT_TOOLS"
 
 # The only redirect a server with no web address of its own can register: Trakt
 # shows the code for pasting back. Trakt advises against it because another app
@@ -320,6 +323,19 @@ def call(
         return _err(e)
 
 
+def keep_tools(server: FastMCP, wanted: str) -> None:
+    """Register only the named tools, refusing to start on a name it lacks."""
+    names = {name.strip() for name in wanted.split(",") if name.strip()}
+    registered = {tool.name for tool in server._tool_manager.list_tools()}
+    unknown = names - registered
+    if unknown:
+        raise SystemExit(
+            f"{ENV_TOOLS} names unknown tools: {', '.join(sorted(unknown))}"
+        )
+    for name in registered - names:
+        server.remove_tool(name)
+
+
 def main() -> None:
     import argparse
 
@@ -330,6 +346,9 @@ def main() -> None:
     dotenv_path = find_dotenv(usecwd=True)
     if dotenv_path and load_dotenv(dotenv_path, override=False):
         logger.info("Loaded .env from %s", dotenv_path)
+
+    if wanted := os.getenv(ENV_TOOLS):
+        keep_tools(mcp, wanted)
 
     parser = argparse.ArgumentParser(prog=f"{APP}-mcp")
     parser.add_argument(

@@ -188,3 +188,31 @@ def test_a_refresh_lost_to_another_process_adopts_its_token():
     runtime.call("GET", "/sync/history")
     assert seen["authorization"] == "Bearer theirs"
     assert runtime.load_token()["refresh_token"] == "r2"
+
+
+def _server_with(*names):
+    from mcp.server.fastmcp import FastMCP
+
+    server = FastMCP("test")
+    for name in names:
+        server.tool(name=name)(lambda: "")
+    return server
+
+
+def _names(server):
+    import asyncio
+
+    return {t.name for t in asyncio.run(server.list_tools())}
+
+
+def test_naming_tools_registers_only_those():
+    server = _server_with("get_a", "get_b", "list_c")
+    runtime.keep_tools(server, " get_a, list_c ")
+    assert _names(server) == {"get_a", "list_c"}
+
+
+def test_naming_an_unknown_tool_stops_the_server():
+    server = _server_with("get_a")
+    with pytest.raises(SystemExit, match="get_typo"):
+        runtime.keep_tools(server, "get_a,get_typo")
+    assert _names(server) == {"get_a"}
